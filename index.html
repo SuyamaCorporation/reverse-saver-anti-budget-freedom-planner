@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>リバース予算・自由支出プランナー</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-br from-sky-50 to-blue-100 min-h-screen p-4">
+<div class="max-w-lg mx-auto">
+  <h1 class="text-2xl font-bold text-blue-800 text-center mb-1 mt-4">リバース予算プランナー</h1>
+  <p class="text-sm text-center text-gray-500 mb-6">先に貯蓄・投資を確保してから残額を自由に使う</p>
+
+  <!-- 基本設定 -->
+  <div class="bg-white rounded-2xl shadow-md p-5 mb-4">
+    <h2 class="text-lg font-semibold text-gray-700 mb-4">基本設定</h2>
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1" for="income">月収（手取り）（円）</label>
+        <input id="income" type="number" min="0" placeholder="例: 280000"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          oninput="recalc()">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1" for="savings-rate">貯蓄率（%）</label>
+        <div class="flex items-center gap-3">
+          <input id="savings-rate" type="range" min="0" max="80" value="20" step="1"
+            class="flex-1 accent-blue-600" oninput="recalc()" aria-label="貯蓄率スライダー">
+          <span id="savings-rate-val" class="w-12 text-right font-semibold text-blue-700">20%</span>
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1" for="invest-rate">投資率（%）</label>
+        <div class="flex items-center gap-3">
+          <input id="invest-rate" type="range" min="0" max="50" value="10" step="1"
+            class="flex-1 accent-indigo-600" oninput="recalc()" aria-label="投資率スライダー">
+          <span id="invest-rate-val" class="w-12 text-right font-semibold text-indigo-700">10%</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 結果パネル -->
+  <div id="result-panel" class="bg-white rounded-2xl shadow-md p-5 mb-4 hidden">
+    <h2 class="text-lg font-semibold text-gray-700 mb-4">月次配分</h2>
+    <div id="allocation-bars" class="space-y-3 mb-4"></div>
+    <div id="free-amount" class="text-center p-4 bg-blue-50 rounded-xl">
+      <div class="text-sm text-gray-500">自由支出予算</div>
+      <div class="text-4xl font-bold text-blue-700" id="free-num">-</div>
+      <div class="text-xs text-gray-400 mt-1" id="free-daily">1日あたり: -</div>
+    </div>
+  </div>
+
+  <!-- 支出シミュレーション -->
+  <div id="sim-section" class="bg-white rounded-2xl shadow-md p-5 mb-4 hidden">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">支出シミュレーション</h2>
+    <div id="categories-sim" class="space-y-3"></div>
+    <div id="sim-status" class="mt-3 p-3 rounded-lg text-sm font-medium"></div>
+  </div>
+
+  <!-- 目標シミュレーション -->
+  <div class="bg-white rounded-2xl shadow-md p-5 mb-4">
+    <h2 class="text-lg font-semibold text-gray-700 mb-3">貯蓄目標シミュレーション</h2>
+    <div class="space-y-3">
+      <div>
+        <label class="block text-sm font-medium text-gray-600 mb-1" for="goal-amount">目標金額（円）</label>
+        <input id="goal-amount" type="number" min="0" placeholder="例: 1000000"
+          class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          oninput="calcGoal()">
+      </div>
+      <div id="goal-result" class="text-sm text-gray-600 p-3 bg-blue-50 rounded-lg hidden"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const STORAGE_KEY6 = 'reverse_saver';
+const CATEGORIES = [
+  { key: 'rent', label: '家賃・住居費', color: 'bg-blue-400', placeholder: 80000 },
+  { key: 'food', label: '食費', color: 'bg-green-400', placeholder: 40000 },
+  { key: 'transport', label: '交通費', color: 'bg-yellow-400', placeholder: 15000 },
+  { key: 'utility', label: '光熱費', color: 'bg-orange-400', placeholder: 10000 },
+  { key: 'entertainment', label: '娯楽・趣味', color: 'bg-pink-400', placeholder: 20000 },
+  { key: 'other', label: 'その他', color: 'bg-gray-400', placeholder: 10000 },
+];
+
+function loadState6() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY6) || '{}'); } catch { return {}; }
+}
+function saveState6(s) { localStorage.setItem(STORAGE_KEY6, JSON.stringify(s)); }
+
+let simAmounts = {};
+
+function recalc() {
+  const income = parseFloat(document.getElementById('income').value) || 0;
+  const savingsRate = parseFloat(document.getElementById('savings-rate').value) / 100;
+  const investRate = parseFloat(document.getElementById('invest-rate').value) / 100;
+
+  document.getElementById('savings-rate-val').textContent = `${Math.round(savingsRate * 100)}%`;
+  document.getElementById('invest-rate-val').textContent = `${Math.round(investRate * 100)}%`;
+
+  const totalReserveRate = savingsRate + investRate;
+  if (totalReserveRate > 1) {
+    document.getElementById('savings-rate').value = Math.round((1 - investRate) * 100);
+    return recalc();
+  }
+
+  const savings = Math.round(income * savingsRate);
+  const invest = Math.round(income * investRate);
+  const freeAmount = income - savings - invest;
+  const freeRate = 1 - savingsRate - investRate;
+
+  const state = loadState6();
+  state.income = income;
+  state.savingsRate = Math.round(savingsRate * 100);
+  state.investRate = Math.round(investRate * 100);
+  saveState6(state);
+
+  if (income > 0) {
+    document.getElementById('result-panel').classList.remove('hidden');
+    document.getElementById('sim-section').classList.remove('hidden');
+
+    const bars = document.getElementById('allocation-bars');
+    bars.innerHTML = '';
+    const items = [
+      { label: '貯蓄', amount: savings, rate: savingsRate, color: 'bg-blue-500' },
+      { label: '投資', amount: invest, rate: investRate, color: 'bg-indigo-500' },
+      { label: '自由支出', amount: freeAmount, rate: freeRate, color: 'bg-sky-400' },
+    ];
+    items.forEach(item => {
+      const wrap = document.createElement('div');
+      const topRow = document.createElement('div');
+      topRow.className = 'flex justify-between text-sm mb-1';
+      const lbl = document.createElement('span');
+      lbl.className = 'font-medium text-gray-700';
+      lbl.textContent = item.label;
+      const amt = document.createElement('span');
+      amt.className = 'font-semibold';
+      amt.textContent = `¥${item.amount.toLocaleString()} (${Math.round(item.rate * 100)}%)`;
+      topRow.appendChild(lbl);
+      topRow.appendChild(amt);
+
+      const barWrap = document.createElement('div');
+      barWrap.className = 'h-5 bg-gray-100 rounded-full overflow-hidden';
+      const bar = document.createElement('div');
+      bar.className = `h-full ${item.color} rounded-full transition-all duration-300`;
+      bar.style.width = `${Math.max(item.rate * 100, 0)}%`;
+      barWrap.appendChild(bar);
+
+      wrap.appendChild(topRow);
+      wrap.appendChild(barWrap);
+      bars.appendChild(wrap);
+    });
+
+    document.getElementById('free-num').textContent = `¥${freeAmount.toLocaleString()}`;
+    document.getElementById('free-daily').textContent = `1日あたり: ¥${Math.round(freeAmount / 30).toLocaleString()}`;
+
+    buildSim(freeAmount);
+    calcGoal();
+  } else {
+    document.getElementById('result-panel').classList.add('hidden');
+    document.getElementById('sim-section').classList.add('hidden');
+  }
+}
+
+function buildSim(freeAmount) {
+  const c = document.getElementById('categories-sim');
+  c.innerHTML = '';
+  const state = loadState6();
+  if (!state.simAmounts) state.simAmounts = {};
+
+  CATEGORIES.forEach(cat => {
+    if (!(cat.key in simAmounts)) {
+      simAmounts[cat.key] = state.simAmounts[cat.key] ?? 0;
+    }
+
+    const wrap = document.createElement('div');
+    const row = document.createElement('div');
+    row.className = 'flex justify-between items-center text-sm mb-1';
+    const lbl = document.createElement('label');
+    lbl.setAttribute('for', `sim-${cat.key}`);
+    lbl.className = 'font-medium text-gray-700';
+    lbl.textContent = cat.label;
+    const valEl = document.createElement('span');
+    valEl.id = `sim-val-${cat.key}`;
+    valEl.className = 'text-blue-600 font-semibold';
+    valEl.textContent = `¥${simAmounts[cat.key].toLocaleString()}`;
+    row.appendChild(lbl);
+    row.appendChild(valEl);
+
+    const input = document.createElement('input');
+    input.id = `sim-${cat.key}`;
+    input.type = 'range';
+    input.min = '0';
+    input.max = String(freeAmount);
+    input.step = '1000';
+    input.value = String(simAmounts[cat.key]);
+    input.className = `w-full accent-blue-500 ${cat.color.replace('bg-', 'accent-').replace('-400', '-500')}`;
+    input.setAttribute('aria-label', `${cat.label}の予算`);
+    input.addEventListener('input', () => {
+      simAmounts[cat.key] = parseFloat(input.value);
+      document.getElementById(`sim-val-${cat.key}`).textContent = `¥${simAmounts[cat.key].toLocaleString()}`;
+      updateSimStatus(freeAmount);
+      const s = loadState6();
+      s.simAmounts = simAmounts;
+      saveState6(s);
+    });
+
+    wrap.appendChild(row);
+    wrap.appendChild(input);
+    c.appendChild(wrap);
+  });
+  updateSimStatus(freeAmount);
+}
+
+function updateSimStatus(freeAmount) {
+  const total = Object.values(simAmounts).reduce((s, v) => s + v, 0);
+  const remaining = freeAmount - total;
+  const st = document.getElementById('sim-status');
+  if (remaining < 0) {
+    st.className = 'mt-3 p-3 rounded-lg text-sm font-medium bg-red-50 text-red-600';
+    st.textContent = `⚠️ 自由予算を¥${Math.abs(remaining).toLocaleString()}オーバーしています！`;
+  } else if (remaining === 0) {
+    st.className = 'mt-3 p-3 rounded-lg text-sm font-medium bg-green-50 text-green-600';
+    st.textContent = '✅ 予算をぴったり配分できています！';
+  } else {
+    st.className = 'mt-3 p-3 rounded-lg text-sm font-medium bg-blue-50 text-blue-600';
+    st.textContent = `残り ¥${remaining.toLocaleString()} 未配分（貯蓄に回せます）`;
+  }
+}
+
+function calcGoal() {
+  const income = parseFloat(document.getElementById('income').value) || 0;
+  const savingsRate = parseFloat(document.getElementById('savings-rate').value) / 100;
+  const goal = parseFloat(document.getElementById('goal-amount').value) || 0;
+  const gr = document.getElementById('goal-result');
+  if (!income || !goal || !savingsRate) { gr.classList.add('hidden'); return; }
+  const monthlySavings = income * savingsRate;
+  const months = Math.ceil(goal / monthlySavings);
+  const years = Math.floor(months / 12);
+  const remMonths = months % 12;
+  gr.classList.remove('hidden');
+  gr.innerHTML = '';
+  const p = document.createElement('p');
+  p.textContent = `月々の貯蓄額：¥${Math.round(monthlySavings).toLocaleString()}`;
+  const p2 = document.createElement('p');
+  p2.className = 'font-semibold text-blue-700 mt-1';
+  p2.textContent = `目標達成まで：約${years > 0 ? `${years}年` : ''}${remMonths}ヶ月（${months}ヶ月）`;
+  gr.appendChild(p);
+  gr.appendChild(p2);
+}
+
+// Load state
+const st = loadState6();
+if (st.income) document.getElementById('income').value = st.income;
+if (st.savingsRate) document.getElementById('savings-rate').value = st.savingsRate;
+if (st.investRate) document.getElementById('invest-rate').value = st.investRate;
+if (st.simAmounts) simAmounts = st.simAmounts;
+recalc();
+</script>
+</body>
+</html>
